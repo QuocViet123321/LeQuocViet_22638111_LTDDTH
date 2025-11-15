@@ -140,7 +140,6 @@ export default function Index() {
           <Text style={styles.addButtonText}>+ Thêm</Text>
         </TouchableOpacity>
       </View>
-      <View></View>
 
       {/* Search & Filter */}
       <View style={styles.row}>
