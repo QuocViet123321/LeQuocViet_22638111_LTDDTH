@@ -1,5 +1,4 @@
-// src/screens/ReadingList.tsx
-import { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -16,7 +15,280 @@ import {
 import { BookRow, BookStatus, initDB } from "../db";
 import { useBooks } from "./useBooks";
 
-export default function ReadingList() {
+// --- Constants & Helper ---
+const statusOptions: Array<BookStatus | "all"> = [
+  "all",
+  "planning",
+  "reading",
+  "done",
+];
+const initialBookInput = { title: "", author: "" };
+
+// --- 1. Component BookItem ---
+// Logic không đổi, giữ nguyên để code sạch hơn.
+interface BookItemProps {
+  item: BookRow;
+  onPress: (book: BookRow) => void;
+  onLongPress: (book: BookRow) => void;
+  onRemove: (book: BookRow) => void;
+}
+
+const BookItem: React.FC<BookItemProps> = React.memo(
+  ({ item, onPress, onLongPress, onRemove }) => {
+    const color = useMemo(() => {
+      switch (item.status) {
+        case "planning":
+          return "#6b7280";
+        case "reading":
+          return "#f59e0b";
+        case "done":
+          return "#10b981";
+        default:
+          return "#6b7280";
+      }
+    }, [item.status]);
+
+    return (
+      <Pressable
+        onPress={() => onPress(item)}
+        onLongPress={() => onLongPress(item)}
+        style={styles.bookItem}
+      >
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.bookTitle,
+              item.status === "done" && styles.doneTitle,
+            ]}
+          >
+            {item.title}
+          </Text>
+          <Text style={styles.bookAuthor}>{item.author ?? "—"}</Text>
+        </View>
+
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={[styles.statusLabel, { color }]}>
+            {item.status.toUpperCase()}
+          </Text>
+          <Text style={styles.metaText}>
+            {new Date(item.created_at * 1000).toLocaleDateString()}
+          </Text>
+          <TouchableOpacity onPress={() => onRemove(item)}>
+            <Text style={styles.deleteText}>Xóa</Text>
+          </TouchableOpacity>
+        </View>
+      </Pressable>
+    );
+  }
+);
+
+// --- 2. Component StatusFilter ---
+// Logic không đổi, giữ nguyên để code sạch hơn.
+interface StatusFilterProps {
+  filterStatus: BookStatus | "all";
+  setFilterStatus: (status: BookStatus | "all") => void;
+}
+
+const StatusFilter: React.FC<StatusFilterProps> = React.memo(
+  ({ filterStatus, setFilterStatus }) => (
+    <View style={styles.filterRow}>
+      {statusOptions.map((s) => (
+        <TouchableOpacity
+          key={s}
+          onPress={() => setFilterStatus(s)}
+          style={[
+            styles.filterBtn,
+            filterStatus === s && styles.filterBtnActive,
+          ]}
+        >
+          <Text
+            style={
+              filterStatus === s ? styles.filterTextActive : styles.filterText
+            }
+          >
+            {s === "all" ? "Tất cả" : s}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  )
+);
+
+// --- 3. Component AddModal ---
+interface ModalInput {
+  title: string;
+  author: string;
+}
+interface AddModalProps {
+  visible: boolean;
+  onClose: () => void;
+  input: ModalInput;
+  setInput: (key: keyof ModalInput, value: string) => void;
+  onSave: (title: string, author: string | undefined) => Promise<void>;
+}
+
+const AddModal: React.FC<AddModalProps> = ({
+  visible,
+  onClose,
+  input,
+  setInput,
+  onSave,
+}) => {
+  const handleSave = async () => {
+    await onSave(input.title, input.author || undefined);
+    onClose();
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Thêm sách</Text>
+          <TextInput
+            placeholder="Tiêu đề (bắt buộc)"
+            value={input.title}
+            onChangeText={(t) => setInput("title", t)}
+            style={styles.modalInput}
+          />
+          <TextInput
+            placeholder="Tác giả (tuỳ chọn)"
+            value={input.author}
+            onChangeText={(a) => setInput("author", a)}
+            style={styles.modalInput}
+          />
+          <TouchableOpacity
+            onPress={handleSave}
+            style={styles.modalSave}
+            disabled={!input.title}
+          >
+            <Text style={styles.modalSaveText}>Lưu</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
+            <Text style={styles.modalCancelText}>Hủy</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// --- 4. Component EditModal ---
+interface EditModalProps {
+  visible: boolean;
+  editing: BookRow | null;
+  onClose: () => void;
+  input: ModalInput;
+  setInput: (key: keyof ModalInput, value: string) => void;
+  onSave: (
+    id: number,
+    data: { title: string; author: string | null; status: BookStatus }
+  ) => Promise<void>;
+}
+
+const EditModal: React.FC<EditModalProps> = ({
+  visible,
+  editing,
+  onClose,
+  input,
+  setInput,
+  onSave,
+}) => {
+  const [status, setStatus] = useState<BookStatus>("planning");
+
+  // Đồng bộ input và status khi 'editing' thay đổi
+  useEffect(() => {
+    if (editing) {
+      setInput("title", editing.title);
+      setInput("author", editing.author ?? "");
+      setStatus(editing.status);
+    }
+  }, [editing, setInput]);
+
+  const handleSave = async () => {
+    if (!editing) return;
+    await onSave(editing.id, {
+      title: input.title,
+      author: input.author || null,
+      status: status,
+    });
+    onClose();
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Sửa sách</Text>
+          <TextInput
+            placeholder="Tiêu đề"
+            value={input.title}
+            onChangeText={(t) => setInput("title", t)}
+            style={styles.modalInput}
+          />
+          <TextInput
+            placeholder="Tác giả"
+            value={input.author}
+            onChangeText={(a) => setInput("author", a)}
+            style={styles.modalInput}
+          />
+
+          {/* Status selection */}
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              marginBottom: 12,
+            }}
+          >
+            {(["planning", "reading", "done"] as BookStatus[]).map((s) => (
+              <TouchableOpacity
+                key={s}
+                onPress={() => setStatus(s)}
+                style={[
+                  styles.statusSelect,
+                  status === s && styles.statusSelectActive,
+                ]}
+              >
+                <Text
+                  style={
+                    status === s ? styles.statusTextActive : styles.statusText
+                  }
+                >
+                  {s}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            onPress={handleSave}
+            style={styles.modalSave}
+            disabled={!input.title}
+          >
+            <Text style={styles.modalSaveText}>Lưu</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
+            <Text style={styles.modalCancelText}>Hủy</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+// --- Component Chính Index ---
+
+export default function Index() {
   const {
     books,
     loading,
@@ -36,218 +308,95 @@ export default function ReadingList() {
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
-  const [titleInput, setTitleInput] = useState("");
-  const [authorInput, setAuthorInput] = useState("");
+  // Hợp nhất input state
+  const [bookInput, setBookInput] = useState(initialBookInput);
   const [editing, setEditing] = useState<BookRow | null>(null);
 
-  useEffect(() => {
-    initializeApp();
+  // Hàm cập nhật input chung
+  const setInput = useCallback((key: keyof typeof bookInput, value: string) => {
+    setBookInput((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const initializeApp = async () => {
-    await initDB(true);
-    await loadBooks();
-  };
+  // Khởi tạo DB
+  useEffect(() => {
+    (async () => {
+      try {
+        await initDB(true);
+        await loadBooks();
+      } catch (err) {
+        console.error("Lỗi khởi tạo DB:", err);
+      }
+    })();
+  }, []);
 
-  const openEdit = (b: BookRow) => {
-    setEditing(b);
-    setTitleInput(b.title);
-    setAuthorInput(b.author ?? "");
-    setEditModalVisible(true);
-  };
-
-  const handleSaveAdd = async () => {
-    if (!titleInput.trim()) {
-      Alert.alert("Lỗi", "Vui lòng nhập tiêu đề sách");
-      return;
-    }
-    await addNewBook(titleInput.trim(), authorInput.trim() || undefined);
-    resetModals();
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editing || !titleInput.trim()) return;
-    await editBook(editing.id, {
-      title: titleInput.trim(),
-      author: authorInput.trim() || null,
-      status: editing.status,
-    });
-    resetModals();
-  };
-
-  const handleImport = async () => {
-    try {
-      await importFromApi(
-        "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111"
-      );
-      Alert.alert("Hoàn tất", "Đã import xong");
-    } catch (err) {
-      Alert.alert("Lỗi import", (err as any).message);
-    }
-  };
-
-  const confirmDelete = (book: BookRow) => {
-    Alert.alert("Xác nhận xóa", `Xóa "${book.title}"?`, [
-      { text: "Hủy", style: "cancel" },
-      { text: "Xóa", style: "destructive", onPress: () => removeBook(book) },
-    ]);
-  };
-
-  const getStatusInfo = (status: BookStatus) => {
-    const statusMap = {
-      planning: { color: "#6b7280", text: "Dự định" },
-      reading: { color: "#f59e0b", text: "Đang đọc" },
-      done: { color: "#10b981", text: "Hoàn thành" },
-    };
-    return statusMap[status] || statusMap.planning;
-  };
-
-  const renderItem = ({ item }: { item: BookRow }) => {
-    const statusInfo = getStatusInfo(item.status);
-    return (
-      <Pressable
-        onPress={() => cycleStatus(item)}
-        onLongPress={() => openEdit(item)}
-        style={styles.bookItem}
-      >
-        <View style={{ flex: 1 }}>
-          <Text
-            style={[
-              styles.bookTitle,
-              item.status === "done" && styles.doneTitle,
-            ]}
-          >
-            {item.title}
-          </Text>
-          <Text style={styles.bookAuthor}>{item.author ?? "—"}</Text>
-        </View>
-
-        <View style={{ alignItems: "flex-end" }}>
-          <Text style={[styles.statusLabel, { color: statusInfo.color }]}>
-            {statusInfo.text.toUpperCase()}
-          </Text>
-          <Text style={styles.metaText}>
-            {new Date(item.created_at * 1000).toLocaleDateString("vi-VN")}
-          </Text>
-          <TouchableOpacity onPress={() => confirmDelete(item)}>
-            <Text style={styles.deleteText}>Xóa</Text>
-          </TouchableOpacity>
-        </View>
-      </Pressable>
-    );
-  };
-
-  const resetModals = () => {
+  // Hàm chung đóng Modal và reset input/editing state
+  const closeModalAndReset = useCallback(() => {
     setAddModalVisible(false);
     setEditModalVisible(false);
     setEditing(null);
-    setTitleInput("");
-    setAuthorInput("");
+    setBookInput(initialBookInput); // Reset input state
+  }, []);
+
+  // Hàm mở Modal chỉnh sửa
+  const openEdit = (b: BookRow) => {
+    setEditing(b);
+    // Modal Edit sẽ tự đồng bộ input thông qua useEffect
+    setEditModalVisible(true);
   };
 
-  const ModalContent = ({ isEdit = false }) => (
-    <View style={styles.modalContent}>
-      <Text style={styles.modalTitle}>{isEdit ? "Sửa sách" : "Thêm sách"}</Text>
+  // Hàm xử lý khi thêm sách
+  const handleAddBook = async (title: string, author: string | undefined) => {
+    await addNewBook(title, author);
+    closeModalAndReset();
+  };
 
-      <TextInput
-        placeholder="Tiêu đề (bắt buộc)"
-        value={titleInput}
-        onChangeText={setTitleInput}
-        style={styles.modalInput}
-      />
-      <TextInput
-        placeholder="Tác giả (tuỳ chọn)"
-        value={authorInput}
-        onChangeText={setAuthorInput}
-        style={styles.modalInput}
-      />
+  const handleImport = async () => {
+    const url = "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111";
+    try {
+      await importFromApi(url);
+      Alert.alert("Hoàn tất", "Đã import xong (nếu có sách mới).");
+    } catch (err) {
+      Alert.alert("Lỗi import", (err as any).message || String(err));
+    }
+  };
 
-      {isEdit && (
-        <View style={styles.statusContainer}>
-          {(["planning", "reading", "done"] as BookStatus[]).map((s) => (
-            <TouchableOpacity
-              key={s}
-              onPress={() =>
-                setEditing((prev) => (prev ? { ...prev, status: s } : prev))
-              }
-              style={[
-                styles.statusSelect,
-                editing?.status === s && styles.statusSelectActive,
-              ]}
-            >
-              <Text
-                style={
-                  editing?.status === s
-                    ? styles.statusTextActive
-                    : styles.statusText
-                }
-              >
-                {getStatusInfo(s).text}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.modalButtons}>
-        <TouchableOpacity
-          onPress={isEdit ? handleSaveEdit : handleSaveAdd}
-          style={[styles.modalButton, styles.modalSave]}
-          disabled={!titleInput.trim()}
-        >
-          <Text style={styles.modalSaveText}>Lưu</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={resetModals}
-          style={[styles.modalButton, styles.modalCancel]}
-        >
-          <Text style={styles.modalCancelText}>Hủy</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+  const renderItem = ({ item }: { item: BookRow }) => (
+    <BookItem
+      item={item}
+      onPress={cycleStatus}
+      onLongPress={openEdit}
+      onRemove={removeBook}
+    />
   );
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerText}>Danh sách đọc</Text>
+        <Text style={styles.headerText}>Reading List</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => setAddModalVisible(true)}
+          onPress={() => {
+            closeModalAndReset(); // Đảm bảo input sạch
+            setAddModalVisible(true);
+          }}
         >
           <Text style={styles.addButtonText}>+ Thêm</Text>
         </TouchableOpacity>
       </View>
 
       {/* Search & Filter */}
-      <TextInput
-        placeholder="Tìm theo tiêu đề..."
-        value={searchText}
-        onChangeText={setSearchText}
-        style={styles.input}
-      />
-      <View style={styles.filterRow}>
-        {(
-          ["all", "planning", "reading", "done"] as Array<BookStatus | "all">
-        ).map((s) => (
-          <TouchableOpacity
-            key={s}
-            onPress={() => setFilterStatus(s)}
-            style={[
-              styles.filterBtn,
-              filterStatus === s && styles.filterBtnActive,
-            ]}
-          >
-            <Text
-              style={
-                filterStatus === s ? styles.filterTextActive : styles.filterText
-              }
-            >
-              {s === "all" ? "Tất cả" : getStatusInfo(s as BookStatus).text}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.row}>
+        <TextInput
+          placeholder="Tìm theo tiêu đề..."
+          value={searchText}
+          onChangeText={setSearchText}
+          style={[styles.input, { flex: 1 }]}
+        />
+        <StatusFilter
+          filterStatus={filterStatus}
+          setFilterStatus={setFilterStatus}
+        />
       </View>
 
       {/* Import */}
@@ -260,7 +409,7 @@ export default function ReadingList() {
           {importing ? "Đang import..." : "Import từ API"}
         </Text>
       </TouchableOpacity>
-      {importError && <Text style={styles.errText}>{importError}</Text>}
+      {importError ? <Text style={styles.errText}>{importError}</Text> : null}
 
       {/* List */}
       <FlatList
@@ -272,36 +421,37 @@ export default function ReadingList() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>Chưa có sách</Text>
+            <Text style={styles.emptyText}>
+              Chưa có sách trong danh sách đọc.
+            </Text>
           </View>
         }
+        contentContainerStyle={{ paddingBottom: 30 }}
       />
 
-      {/* Modals */}
-      <Modal
+      {/* Add Modal */}
+      <AddModal
         visible={addModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={resetModals}
-      >
-        <View style={styles.modalOverlay}>
-          <ModalContent />
-        </View>
-      </Modal>
+        onClose={closeModalAndReset}
+        input={bookInput}
+        setInput={setInput}
+        onSave={handleAddBook}
+      />
 
-      <Modal
+      {/* Edit Modal */}
+      <EditModal
         visible={editModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={resetModals}
-      >
-        <View style={styles.modalOverlay}>
-          <ModalContent isEdit />
-        </View>
-      </Modal>
+        editing={editing}
+        onClose={closeModalAndReset}
+        input={bookInput}
+        setInput={setInput}
+        onSave={editBook}
+      />
     </SafeAreaView>
   );
 }
+
+// --- Styles (Giữ nguyên) ---
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: "#f3f4f6" },
@@ -309,28 +459,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
   headerText: { fontSize: 24, fontWeight: "700", color: "#1f2937" },
-  addButton: {
-    backgroundColor: "#2563eb",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
+  addButton: { backgroundColor: "#2563eb", padding: 10, borderRadius: 10 },
   addButtonText: { color: "#fff", fontWeight: "600" },
+  row: { marginBottom: 8 },
   input: {
     backgroundColor: "#fff",
     borderRadius: 10,
-    padding: 12,
+    padding: 10,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     marginBottom: 8,
   },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 12 },
+  filterRow: { flexDirection: "row", marginTop: 4, flexWrap: "wrap" },
   filterBtn: {
     paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -338,40 +484,34 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   filterBtnActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  filterText: { color: "#374151", fontSize: 12 },
-  filterTextActive: { color: "#fff", fontSize: 12 },
+  filterText: { color: "#374151", textTransform: "capitalize" },
+  filterTextActive: { color: "#fff", textTransform: "capitalize" },
   importBtn: {
     backgroundColor: "#10b981",
-    padding: 12,
+    padding: 10,
     borderRadius: 10,
     marginBottom: 8,
   },
   importBtnDisabled: { backgroundColor: "#94a3b8" },
   importText: { color: "#fff", fontWeight: "600", textAlign: "center" },
-  errText: { color: "#ef4444", marginBottom: 8, textAlign: "center" },
+  errText: { color: "#ef4444", marginBottom: 8 },
   bookItem: {
-    padding: 16,
+    padding: 14,
     backgroundColor: "#fff",
     borderRadius: 12,
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 10,
   },
-  bookTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 4,
-  },
+  bookTitle: { fontSize: 16, fontWeight: "600", color: "#111827" },
   doneTitle: { textDecorationLine: "line-through", color: "#9ca3af" },
-  bookAuthor: { fontSize: 14, color: "#6b7280" },
-  statusLabel: { fontSize: 12, fontWeight: "700", marginBottom: 4 },
-  metaText: { fontSize: 11, color: "#6b7280", marginBottom: 4 },
-  deleteText: { color: "#ef4444", fontWeight: "600", fontSize: 12 },
+  bookAuthor: { fontSize: 12, color: "#6b7280", marginTop: 3 },
+  statusLabel: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
+  metaText: { fontSize: 11, color: "#6b7280" },
+  deleteText: { color: "#ef4444", marginTop: 6, fontWeight: "600" },
   empty: { padding: 40, alignItems: "center" },
-  emptyText: { color: "#9ca3af", fontSize: 16 },
+  emptyText: { color: "#9ca3af" },
 
-  // Modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -385,43 +525,35 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 12,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    marginBottom: 16,
-    textAlign: "center",
-  },
+  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 12 },
   modalInput: {
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
     borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  modalSave: {
+    backgroundColor: "#2563eb",
     padding: 12,
-    marginBottom: 12,
+    borderRadius: 8,
+    marginBottom: 8,
   },
-  modalButtons: { flexDirection: "row", gap: 12 },
-  modalButton: { flex: 1, padding: 14, borderRadius: 8 },
-  modalSave: { backgroundColor: "#2563eb" },
   modalSaveText: { color: "#fff", textAlign: "center", fontWeight: "700" },
-  modalCancel: { backgroundColor: "#6b7280" },
+  modalCancel: { backgroundColor: "#ef4444", padding: 12, borderRadius: 8 },
   modalCancelText: { color: "#fff", textAlign: "center", fontWeight: "700" },
-
-  // Status selection
-  statusContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 16,
-    gap: 8,
-  },
   statusSelect: {
     flex: 1,
-    paddingVertical: 10,
+    marginHorizontal: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     alignItems: "center",
   },
   statusSelectActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  statusText: { fontSize: 14, color: "#374151" },
-  statusTextActive: { color: "#fff", fontSize: 14 },
+  statusText: { textTransform: "capitalize", color: "#374151" },
+  statusTextActive: { color: "#fff", textTransform: "capitalize" },
 });
