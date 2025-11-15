@@ -16,9 +16,10 @@ import {
 import { BookRow, BookStatus, initDB } from "../db";
 import { useBooks } from "./useBooks";
 
-export default function ReadingList() {
+export default function Index() {
   const {
     books,
+    rawBooks,
     loading,
     importing,
     importError,
@@ -34,48 +35,56 @@ export default function ReadingList() {
     importFromApi,
   } = useBooks();
 
-  const [modalVisible, setModalVisible] = useState(false);
-  const [editing, setEditing] = useState<BookRow | null>(null);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [editModalVisible, setEditModalVisible] = useState(false);
   const [titleInput, setTitleInput] = useState("");
   const [authorInput, setAuthorInput] = useState("");
+  const [editing, setEditing] = useState<BookRow | null>(null);
 
   useEffect(() => {
     (async () => {
-      await initDB(true);
-      await loadBooks();
+      try {
+        await initDB(true);
+        await loadBooks();
+      } catch (err) {
+        console.error(err);
+      }
     })();
   }, []);
 
-  const openModal = (b?: BookRow) => {
-    setEditing(b ?? null);
-    setTitleInput(b?.title ?? "");
-    setAuthorInput(b?.author ?? "");
-    setModalVisible(true);
+  const openEdit = (b: BookRow) => {
+    setEditing(b);
+    setTitleInput(b.title);
+    setAuthorInput(b.author ?? "");
+    setEditModalVisible(true);
   };
 
-  const saveModal = async () => {
-    if (editing)
-      await editBook(editing.id, {
-        title: titleInput,
-        author: authorInput || null,
-        status: editing.status,
-      });
-    else await addNewBook(titleInput, authorInput || undefined);
-
-    setModalVisible(false);
-    setEditing(null);
+  const handleSaveAdd = async () => {
+    await addNewBook(titleInput, authorInput || undefined);
     setTitleInput("");
     setAuthorInput("");
+    setAddModalVisible(false);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing) return;
+    await editBook(editing.id, {
+      title: titleInput,
+      author: authorInput || null,
+      status: editing.status,
+    });
+    setEditModalVisible(false);
+    setEditing(null);
   };
 
   const handleImport = async () => {
+    // Example API — replace with real one when needed
+    const url = "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111";
     try {
-      await importFromApi(
-        "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111"
-      );
-      Alert.alert("Hoàn tất", "Đã import dữ liệu.");
-    } catch (e) {
-      Alert.alert("Lỗi", String(e));
+      await importFromApi(url);
+      Alert.alert("Hoàn tất", "Đã import xong (nếu có sách mới).");
+    } catch (err) {
+      Alert.alert("Lỗi import", (err as any).message || String(err));
     }
   };
 
@@ -86,11 +95,10 @@ export default function ReadingList() {
         : item.status === "reading"
         ? "#f59e0b"
         : "#10b981";
-
     return (
       <Pressable
         onPress={() => cycleStatus(item)}
-        onLongPress={() => openModal(item)}
+        onLongPress={() => openEdit(item)}
         style={styles.bookItem}
       >
         <View style={{ flex: 1 }}>
@@ -106,7 +114,9 @@ export default function ReadingList() {
         </View>
 
         <View style={{ alignItems: "flex-end" }}>
-          <Text style={[styles.statusLabel, { color }]}>{item.status}</Text>
+          <Text style={[styles.statusLabel, { color }]}>
+            {item.status.toUpperCase()}
+          </Text>
           <Text style={styles.metaText}>
             {new Date(item.created_at * 1000).toLocaleDateString()}
           </Text>
@@ -120,41 +130,52 @@ export default function ReadingList() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerText}>Reading List</Text>
-        <TouchableOpacity style={styles.addButton} onPress={() => openModal()}>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setAddModalVisible(true)}
+        >
           <Text style={styles.addButtonText}>+ Thêm</Text>
         </TouchableOpacity>
       </View>
 
-      <TextInput
-        placeholder="Tìm theo tiêu đề..."
-        value={searchText}
-        onChangeText={setSearchText}
-        style={styles.input}
-      />
-
-      <View style={styles.filterRow}>
-        {["all", "planning", "reading", "done"].map((s) => (
-          <TouchableOpacity
-            key={s}
-            onPress={() => setFilterStatus(s as any)}
-            style={[
-              styles.filterBtn,
-              filterStatus === s && styles.filterBtnActive,
-            ]}
-          >
-            <Text
-              style={
-                filterStatus === s ? styles.filterTextActive : styles.filterText
-              }
+      {/* Search & Filter */}
+      <View style={styles.row}>
+        <TextInput
+          placeholder="Tìm theo tiêu đề..."
+          value={searchText}
+          onChangeText={setSearchText}
+          style={[styles.input, { flex: 1 }]}
+        />
+        <View style={styles.filterRow}>
+          {(
+            ["all", "planning", "reading", "done"] as Array<BookStatus | "all">
+          ).map((s) => (
+            <TouchableOpacity
+              key={s}
+              onPress={() => setFilterStatus(s)}
+              style={[
+                styles.filterBtn,
+                filterStatus === s && styles.filterBtnActive,
+              ]}
             >
-              {s === "all" ? "Tất cả" : s}
-            </Text>
-          </TouchableOpacity>
-        ))}
+              <Text
+                style={
+                  filterStatus === s
+                    ? styles.filterTextActive
+                    : styles.filterText
+                }
+              >
+                {s === "all" ? "Tất cả" : s}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
       </View>
 
+      {/* Import */}
       <TouchableOpacity
         onPress={handleImport}
         disabled={importing}
@@ -164,9 +185,9 @@ export default function ReadingList() {
           {importing ? "Đang import..." : "Import từ API"}
         </Text>
       </TouchableOpacity>
+      {importError ? <Text style={styles.errText}>{importError}</Text> : null}
 
-      {importError && <Text style={styles.errText}>{importError}</Text>}
-
+      {/* List */}
       <FlatList
         data={books}
         keyExtractor={(i) => i.id.toString()}
@@ -174,17 +195,56 @@ export default function ReadingList() {
         refreshControl={
           <RefreshControl refreshing={loading} onRefresh={loadBooks} />
         }
-        ListEmptyComponent={<Text style={styles.emptyText}>Chưa có sách.</Text>}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>
+              Chưa có sách trong danh sách đọc.
+            </Text>
+          </View>
+        }
+        contentContainerStyle={{ paddingBottom: 30 }}
       />
 
-      {/* ONE MODAL FOR ADD + EDIT */}
-      <Modal visible={modalVisible} transparent animationType="fade">
+      {/* Add Modal */}
+      <Modal visible={addModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {editing ? "Sửa sách" : "Thêm sách"}
-            </Text>
+            <Text style={styles.modalTitle}>Thêm sách</Text>
+            <TextInput
+              placeholder="Tiêu đề (bắt buộc)"
+              value={titleInput}
+              onChangeText={setTitleInput}
+              style={styles.modalInput}
+            />
+            <TextInput
+              placeholder="Tác giả (tuỳ chọn)"
+              value={authorInput}
+              onChangeText={setAuthorInput}
+              style={styles.modalInput}
+            />
+            <TouchableOpacity
+              onPress={async () => {
+                await handleSaveAdd();
+              }}
+              style={styles.modalSave}
+            >
+              <Text style={styles.modalSaveText}>Lưu</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setAddModalVisible(false)}
+              style={styles.modalCancel}
+            >
+              <Text style={styles.modalCancelText}>Hủy</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
+      {/* Edit Modal */}
+      <Modal visible={editModalVisible} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Sửa sách</Text>
             <TextInput
               placeholder="Tiêu đề"
               value={titleInput}
@@ -198,39 +258,56 @@ export default function ReadingList() {
               style={styles.modalInput}
             />
 
-            {editing && (
-              <View style={styles.statusRow}>
-                {["planning", "reading", "done"].map((s) => (
-                  <TouchableOpacity
-                    key={s}
-                    onPress={() =>
-                      setEditing({ ...editing, status: s as BookStatus })
+            {/* Status selection (simple buttons) */}
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              {(["planning", "reading", "done"] as BookStatus[]).map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  onPress={() =>
+                    setEditing((prev) => (prev ? { ...prev, status: s } : prev))
+                  }
+                  style={[
+                    styles.statusSelect,
+                    editing?.status === s && styles.statusSelectActive,
+                  ]}
+                >
+                  <Text
+                    style={
+                      editing?.status === s
+                        ? styles.statusTextActive
+                        : styles.statusText
                     }
-                    style={[
-                      styles.statusSelect,
-                      editing.status === s && styles.statusSelectActive,
-                    ]}
                   >
-                    <Text
-                      style={
-                        editing.status === s
-                          ? styles.statusTextActive
-                          : styles.statusText
-                      }
-                    >
-                      {s}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
+                    {s}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
 
-            <TouchableOpacity style={styles.modalSave} onPress={saveModal}>
+            <TouchableOpacity
+              onPress={async () => {
+                if (!editing) return;
+                await editBook(editing.id, {
+                  title: titleInput,
+                  author: authorInput || null,
+                  status: editing.status,
+                });
+                setEditModalVisible(false);
+                setEditing(null);
+              }}
+              style={styles.modalSave}
+            >
               <Text style={styles.modalSaveText}>Lưu</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              onPress={() => setEditModalVisible(false)}
               style={styles.modalCancel}
-              onPress={() => setModalVisible(false)}
             >
               <Text style={styles.modalCancelText}>Hủy</Text>
             </TouchableOpacity>
@@ -246,84 +323,82 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
+    alignItems: "center",
+    marginBottom: 12,
   },
-  headerText: { fontSize: 22, fontWeight: "700" },
-  addButton: { backgroundColor: "#2563eb", padding: 10, borderRadius: 8 },
+  headerText: { fontSize: 24, fontWeight: "700", color: "#1f2937" },
+  addButton: { backgroundColor: "#2563eb", padding: 10, borderRadius: 10 },
   addButtonText: { color: "#fff", fontWeight: "600" },
+  row: { marginBottom: 8 },
   input: {
     backgroundColor: "#fff",
+    borderRadius: 10,
     padding: 10,
-    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "#e5e7eb",
+    marginBottom: 8,
   },
-  filterRow: { flexDirection: "row", flexWrap: "wrap", marginVertical: 6 },
+  filterRow: { flexDirection: "row", marginTop: 4, flexWrap: "wrap" },
   filterBtn: {
-    padding: 6,
+    paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: "#e5e7eb",
     marginRight: 6,
+    marginTop: 6,
   },
-  filterBtnActive: { backgroundColor: "#111", borderColor: "#111" },
-  filterText: { color: "#333" },
-  filterTextActive: { color: "#fff" },
+  filterBtnActive: { backgroundColor: "#111827", borderColor: "#111827" },
+  filterText: { color: "#374151", textTransform: "capitalize" },
+  filterTextActive: { color: "#fff", textTransform: "capitalize" },
   importBtn: {
     backgroundColor: "#10b981",
     padding: 10,
     borderRadius: 10,
-    marginTop: 6,
+    marginBottom: 8,
   },
-  importBtnDisabled: { backgroundColor: "#aaa" },
-  importText: { color: "#fff", textAlign: "center", fontWeight: "600" },
-  errText: { color: "red", marginVertical: 5 },
+  importBtnDisabled: { backgroundColor: "#94a3b8" },
+  importText: { color: "#fff", fontWeight: "600", textAlign: "center" },
+  errText: { color: "#ef4444", marginBottom: 8 },
   bookItem: {
     padding: 14,
     backgroundColor: "#fff",
-    borderRadius: 10,
+    borderRadius: 12,
     flexDirection: "row",
-    marginBottom: 8,
+    alignItems: "center",
+    marginBottom: 10,
   },
-  bookTitle: { fontSize: 16, fontWeight: "600" },
-  doneTitle: { textDecorationLine: "line-through", color: "#aaa" },
-  bookAuthor: { fontSize: 12, color: "#666" },
-  statusLabel: { fontSize: 12, fontWeight: "700", marginBottom: 4 },
-  metaText: { fontSize: 11, color: "#777" },
-  deleteText: { marginTop: 4, color: "red" },
-  emptyText: { textAlign: "center", marginTop: 20, color: "#888" },
+  bookTitle: { fontSize: 16, fontWeight: "600", color: "#111827" },
+  doneTitle: { textDecorationLine: "line-through", color: "#9ca3af" },
+  bookAuthor: { fontSize: 12, color: "#6b7280", marginTop: 3 },
+  statusLabel: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
+  metaText: { fontSize: 11, color: "#6b7280" },
+  deleteText: { color: "#ef4444", marginTop: 6, fontWeight: "600" },
+  empty: { padding: 40, alignItems: "center" },
+  emptyText: { color: "#9ca3af" },
 
   modalOverlay: {
     flex: 1,
-    justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
   modalContent: {
+    width: "100%",
     backgroundColor: "#fff",
-    margin: 20,
-    padding: 16,
-    borderRadius: 10,
+    padding: 20,
+    borderRadius: 12,
   },
-  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 10 },
+  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 12 },
   modalInput: {
-    padding: 10,
+    backgroundColor: "#fff",
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "#e5e7eb",
     borderRadius: 8,
+    padding: 10,
     marginBottom: 10,
   },
-
-  statusRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  statusSelect: { padding: 8, borderWidth: 1, borderRadius: 8 },
-  statusSelectActive: { backgroundColor: "#111", borderColor: "#111" },
-  statusText: { color: "#333" },
-  statusTextActive: { color: "#fff" },
-
   modalSave: {
     backgroundColor: "#2563eb",
     padding: 12,
@@ -333,4 +408,14 @@ const styles = StyleSheet.create({
   modalSaveText: { color: "#fff", textAlign: "center", fontWeight: "700" },
   modalCancel: { backgroundColor: "#ef4444", padding: 12, borderRadius: 8 },
   modalCancelText: { color: "#fff", textAlign: "center", fontWeight: "700" },
+  statusSelect: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  statusSelectActive: { backgroundColor: "#111827", borderColor: "#111827" },
+  statusText: { textTransform: "capitalize", color: "#374151" },
+  statusTextActive: { color: "#fff", textTransform: "capitalize" },
 });
