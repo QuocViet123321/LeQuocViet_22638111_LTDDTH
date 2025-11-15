@@ -1,36 +1,34 @@
+// src/db.ts
 import * as SQLite from "expo-sqlite";
 
-/* -------------------------------------------------------------------------- */
-/*                           SINGLETON DATABASE INSTANCE                       */
-/* -------------------------------------------------------------------------- */
-
-let db: SQLite.SQLiteDatabase | null = null;
-
-/** Get or create DB instance */
-export async function getDB() {
-  if (!db) {
-    db = await SQLite.openDatabaseAsync("reading_list.db");
-  }
-  return db;
-}
-
-/* -------------------------------------------------------------------------- */
-/*                          BOOK ROW TYPE (Reading List)                       */
-/* -------------------------------------------------------------------------- */
+export type BookStatus = "planning" | "reading" | "done";
 
 export type BookRow = {
   id: number;
   title: string;
   author: string | null;
-  status: "planning" | "reading" | "done";
-  created_at: number; // timestamp (seconds)
+  status: BookStatus;
+  created_at: number; // seconds
 };
 
 /* -------------------------------------------------------------------------- */
-/*                              INIT DATABASE                                  */
+/*                          SINGLETON DATABASE INSTANCE                        */
 /* -------------------------------------------------------------------------- */
 
-export async function initDB() {
+let db: SQLite.WebSQLDatabase | null = null;
+
+export async function getDB() {
+  if (!db) {
+    db = await SQLite.openDatabaseAsync("readinglist.db");
+  }
+  return db;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                 INIT DB                                     */
+/* -------------------------------------------------------------------------- */
+
+export async function initDB(seed = true) {
   const database = await getDB();
 
   await database.execAsync(`
@@ -42,108 +40,129 @@ export async function initDB() {
       created_at INTEGER
     );
   `);
+
+  if (seed) {
+    const existing = await database.getAllAsync("SELECT id FROM books LIMIT 1;");
+    if (existing.length === 0) {
+      const ts = Math.floor(Date.now() / 1000);
+      await addBook("Clean Code", "Robert C. Martin", "planning", ts - 86400 * 10);
+      await addBook("Atomic Habits", "James Clear", "planning", ts - 86400 * 5);
+      await addBook("The Pragmatic Programmer", "Andrew Hunt", "reading", ts - 86400 * 2);
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                  CRUD BOOK                                 */
+/*                                   CRUD                                      */
 /* -------------------------------------------------------------------------- */
 
-/** Add a new book */
 export async function addBook(
   title: string,
-  author: string = "",
-  status: "planning" | "reading" | "done" = "planning",
+  author: string | null = null,
+  status: BookStatus = "planning",
   created_at?: number
 ) {
-  const database = await getDB();
-  const ts = created_at || Math.floor(Date.now() / 1000);
+  const db = await getDB();
+  const ts = created_at ?? Math.floor(Date.now() / 1000);
 
-  await database.runAsync(
+  await db.runAsync(
     "INSERT INTO books (title, author, status, created_at) VALUES (?, ?, ?, ?)",
     [title, author, status, ts]
   );
 }
 
-/** Get all books */
 export async function getAllBooks(): Promise<BookRow[]> {
-  const database = await getDB();
-
-  return await database.getAllAsync<BookRow>(
+  const db = await getDB();
+  const rows = await db.getAllAsync<BookRow>(
     "SELECT * FROM books ORDER BY created_at DESC"
   );
+  return rows.map((r) => ({
+    ...r,
+    status: (r.status as BookStatus) || "planning",
+  }));
 }
 
-/** Update book fields */
 export async function updateBook(
   id: number,
-  fields: Partial<Omit<BookRow, "id">>
+  payload: { title?: string; author?: string | null; status?: BookStatus }
 ) {
-  const database = await getDB();
+  const db = await getDB();
 
-  const updates = [];
-  const params: any[] = [];
+  const fields: string[] = [];
+  const values: any[] = [];
 
-  if (fields.title !== undefined) {
-    updates.push("title = ?");
-    params.push(fields.title);
+  if (payload.title !== undefined) {
+    fields.push("title = ?");
+    values.push(payload.title);
   }
-  if (fields.author !== undefined) {
-    updates.push("author = ?");
-    params.push(fields.author);
+  if (payload.author !== undefined) {
+    fields.push("author = ?");
+    values.push(payload.author);
   }
-  if (fields.status !== undefined) {
-    updates.push("status = ?");
-    params.push(fields.status);
-  }
-  if (fields.created_at !== undefined) {
-    updates.push("created_at = ?");
-    params.push(fields.created_at);
+  if (payload.status !== undefined) {
+    fields.push("status = ?");
+    values.push(payload.status);
   }
 
-  if (updates.length === 0) return;
+  if (fields.length === 0) return;
 
-  params.push(id);
-  const sql = `UPDATE books SET ${updates.join(", ")} WHERE id = ?`;
+  values.push(id);
 
-  await database.runAsync(sql, params);
+  const sql = `UPDATE books SET ${fields.join(", ")} WHERE id = ?`;
+  await db.runAsync(sql, values);
 }
 
-/** Delete a book */
+export async function cycleBookStatus(id: number, current: BookStatus) {
+  const order: BookStatus[] = ["planning", "reading", "done"];
+  const next = order[(order.indexOf(current) + 1) % order.length];
+
+  const db = await getDB();
+  await db.runAsync("UPDATE books SET status = ? WHERE id = ?", [next, id]);
+  return next;
+}
+
 export async function deleteBook(id: number) {
-  const database = await getDB();
-  await database.runAsync("DELETE FROM books WHERE id = ?", [id]);
+  const db = await getDB();
+  await db.runAsync("DELETE FROM books WHERE id = ?", [id]);
 }
 
 /* -------------------------------------------------------------------------- */
-/*                             IMPORT BOOKS FROM API                           */
+/*                              IMPORT FROM API                                */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Import + merge list of books from an API.
- * Avoid duplicates using title.
- */
 export async function importBooksFromAPI(apiUrl: string) {
   try {
     const res = await fetch(apiUrl);
     if (!res.ok) throw new Error("Fetch failed");
+    const data = await res.json();
 
-    const data: BookRow[] = await res.json();
+    const items: Array<{ title?: string; author?: string | null }> = Array.isArray(data)
+      ? data
+      : [];
 
-    // All current books
-    const existing = await getAllBooks();
-    const existingTitles = new Set(existing.map((b) => b.title));
+    const db = await getDB();
 
-    // Merge — add only new titles
-    for (const item of data) {
-      if (!existingTitles.has(item.title)) {
-        await addBook(
-          item.title,
-          item.author ?? "",
-          item.status ?? "planning",
-          item.created_at
-        );
-      }
+    const existing = await db.getAllAsync<{ title: string }>(
+      "SELECT title FROM books"
+    );
+
+    const existingSet = new Set(existing.map((b) => b.title.toLowerCase()));
+
+    let added = 0;
+
+    for (const it of items) {
+      const title = (it.title || "").trim();
+      if (!title) continue;
+
+      const key = title.toLowerCase();
+      if (existingSet.has(key)) continue;
+
+      await addBook(title, it.author ?? null, "planning");
+      existingSet.add(key);
+      added++;
     }
+
+    return { added };
   } catch (err) {
     throw err;
   }
