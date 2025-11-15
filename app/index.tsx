@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+// src/screens/ReadingList.tsx
+import { useEffect, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -15,280 +16,7 @@ import {
 import { BookRow, BookStatus, initDB } from "../db";
 import { useBooks } from "./useBooks";
 
-// --- Constants & Helper ---
-const statusOptions: Array<BookStatus | "all"> = [
-  "all",
-  "planning",
-  "reading",
-  "done",
-];
-
-// --- 1. Component BookItem ---
-interface BookItemProps {
-  item: BookRow;
-  onPress: (book: BookRow) => void;
-  onLongPress: (book: BookRow) => void;
-  onRemove: (book: BookRow) => void;
-}
-
-const BookItem: React.FC<BookItemProps> = ({
-  item,
-  onPress,
-  onLongPress,
-  onRemove,
-}) => {
-  const color = useMemo(() => {
-    switch (item.status) {
-      case "planning":
-        return "#6b7280";
-      case "reading":
-        return "#f59e0b";
-      case "done":
-        return "#10b981";
-      default:
-        return "#6b7280";
-    }
-  }, [item.status]);
-
-  return (
-    <Pressable
-      onPress={() => onPress(item)}
-      onLongPress={() => onLongPress(item)}
-      style={styles.bookItem}
-    >
-      <View style={{ flex: 1 }}>
-        <Text
-          style={[styles.bookTitle, item.status === "done" && styles.doneTitle]}
-        >
-          {item.title}
-        </Text>
-        <Text style={styles.bookAuthor}>{item.author ?? "—"}</Text>
-      </View>
-
-      <View style={{ alignItems: "flex-end" }}>
-        <Text style={[styles.statusLabel, { color }]}>
-          {item.status.toUpperCase()}
-        </Text>
-        <Text style={styles.metaText}>
-          {new Date(item.created_at * 1000).toLocaleDateString()}
-        </Text>
-        <TouchableOpacity onPress={() => onRemove(item)}>
-          <Text style={styles.deleteText}>Xóa</Text>
-        </TouchableOpacity>
-      </View>
-    </Pressable>
-  );
-};
-
-// --- 2. Component StatusFilter ---
-interface StatusFilterProps {
-  filterStatus: BookStatus | "all";
-  setFilterStatus: (status: BookStatus | "all") => void;
-}
-
-const StatusFilter: React.FC<StatusFilterProps> = ({
-  filterStatus,
-  setFilterStatus,
-}) => (
-  <View style={styles.filterRow}>
-    {statusOptions.map((s) => (
-      <TouchableOpacity
-        key={s}
-        onPress={() => setFilterStatus(s)}
-        style={[styles.filterBtn, filterStatus === s && styles.filterBtnActive]}
-      >
-        <Text
-          style={
-            filterStatus === s ? styles.filterTextActive : styles.filterText
-          }
-        >
-          {s === "all" ? "Tất cả" : s}
-        </Text>
-      </TouchableOpacity>
-    ))}
-  </View>
-);
-
-// --- 3. Component AddModal ---
-interface AddModalProps {
-  visible: boolean;
-  onClose: () => void;
-  titleInput: string;
-  setTitleInput: (text: string) => void;
-  authorInput: string;
-  setAuthorInput: (text: string) => void;
-  onSave: (title: string, author: string | undefined) => Promise<void>;
-}
-
-const AddModal: React.FC<AddModalProps> = ({
-  visible,
-  onClose,
-  titleInput,
-  setTitleInput,
-  authorInput,
-  setAuthorInput,
-  onSave,
-}) => {
-  const handleSave = async () => {
-    await onSave(titleInput, authorInput || undefined);
-    // State reset được thực hiện ở component cha (Index) sau khi đóng modal
-    onClose();
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Thêm sách</Text>
-          <TextInput
-            placeholder="Tiêu đề (bắt buộc)"
-            value={titleInput}
-            onChangeText={setTitleInput}
-            style={styles.modalInput}
-          />
-          <TextInput
-            placeholder="Tác giả (tuỳ chọn)"
-            value={authorInput}
-            onChangeText={setAuthorInput}
-            style={styles.modalInput}
-          />
-          <TouchableOpacity
-            onPress={handleSave}
-            style={styles.modalSave}
-            disabled={!titleInput}
-          >
-            <Text style={styles.modalSaveText}>Lưu</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
-            <Text style={styles.modalCancelText}>Hủy</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-// --- 4. Component EditModal ---
-interface EditModalProps {
-  visible: boolean;
-  editing: BookRow | null;
-  onClose: () => void;
-  titleInput: string;
-  setTitleInput: (text: string) => void;
-  authorInput: string;
-  setAuthorInput: (text: string) => void;
-  onSave: (
-    id: number,
-    data: { title: string; author: string | null; status: BookStatus }
-  ) => Promise<void>;
-}
-
-const EditModal: React.FC<EditModalProps> = ({
-  visible,
-  editing,
-  onClose,
-  titleInput,
-  setTitleInput,
-  authorInput,
-  setAuthorInput,
-  onSave,
-}) => {
-  // Quản lý trạng thái cục bộ cho Status trong khi chỉnh sửa
-  const [status, setStatus] = useState<BookStatus>("planning");
-
-  useEffect(() => {
-    if (editing) {
-      setTitleInput(editing.title);
-      setAuthorInput(editing.author ?? "");
-      setStatus(editing.status); // Đồng bộ trạng thái status từ book
-    }
-  }, [editing, setTitleInput, setAuthorInput]);
-
-  const handleSave = async () => {
-    if (!editing) return;
-    await onSave(editing.id, {
-      title: titleInput,
-      author: authorInput || null,
-      status: status,
-    });
-    onClose();
-  };
-
-  return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>Sửa sách</Text>
-          <TextInput
-            placeholder="Tiêu đề"
-            value={titleInput}
-            onChangeText={setTitleInput}
-            style={styles.modalInput}
-          />
-          <TextInput
-            placeholder="Tác giả"
-            value={authorInput}
-            onChangeText={setAuthorInput}
-            style={styles.modalInput}
-          />
-
-          {/* Status selection (simple buttons) */}
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 12,
-            }}
-          >
-            {(["planning", "reading", "done"] as BookStatus[]).map((s) => (
-              <TouchableOpacity
-                key={s}
-                onPress={() => setStatus(s)}
-                style={[
-                  styles.statusSelect,
-                  status === s && styles.statusSelectActive,
-                ]}
-              >
-                <Text
-                  style={
-                    status === s ? styles.statusTextActive : styles.statusText
-                  }
-                >
-                  {s}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <TouchableOpacity
-            onPress={handleSave}
-            style={styles.modalSave}
-            disabled={!titleInput}
-          >
-            <Text style={styles.modalSaveText}>Lưu</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
-            <Text style={styles.modalCancelText}>Hủy</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </Modal>
-  );
-};
-
-// --- Component Chính Index ---
-
-export default function Index() {
+export default function ReadingList() {
   const {
     books,
     loading,
@@ -313,25 +41,103 @@ export default function Index() {
   const [editing, setEditing] = useState<BookRow | null>(null);
 
   useEffect(() => {
-    (async () => {
-      try {
-        await initDB(true);
-        await loadBooks();
-      } catch (err) {
-        console.error("Lỗi khởi tạo DB:", err);
-      }
-    })();
+    initializeApp();
   }, []);
 
-  // Hàm mở Modal chỉnh sửa
+  const initializeApp = async () => {
+    await initDB(true);
+    await loadBooks();
+  };
+
   const openEdit = (b: BookRow) => {
     setEditing(b);
-    // Không cần set input ở đây, vì EditModal sẽ tự đồng bộ trong useEffect
+    setTitleInput(b.title);
+    setAuthorInput(b.author ?? "");
     setEditModalVisible(true);
   };
 
-  // Hàm đóng Modal và reset input
-  const closeModalAndReset = () => {
+  const handleSaveAdd = async () => {
+    if (!titleInput.trim()) {
+      Alert.alert("Lỗi", "Vui lòng nhập tiêu đề sách");
+      return;
+    }
+    await addNewBook(titleInput.trim(), authorInput.trim() || undefined);
+    resetModals();
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editing || !titleInput.trim()) return;
+    await editBook(editing.id, {
+      title: titleInput.trim(),
+      author: authorInput.trim() || null,
+      status: editing.status,
+    });
+    resetModals();
+  };
+
+  const handleImport = async () => {
+    try {
+      await importFromApi(
+        "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111"
+      );
+      Alert.alert("Hoàn tất", "Đã import xong");
+    } catch (err) {
+      Alert.alert("Lỗi import", (err as any).message);
+    }
+  };
+
+  const confirmDelete = (book: BookRow) => {
+    Alert.alert("Xác nhận xóa", `Xóa "${book.title}"?`, [
+      { text: "Hủy", style: "cancel" },
+      { text: "Xóa", style: "destructive", onPress: () => removeBook(book) },
+    ]);
+  };
+
+  const getStatusInfo = (status: BookStatus) => {
+    const statusMap = {
+      planning: { color: "#6b7280", text: "Dự định" },
+      reading: { color: "#f59e0b", text: "Đang đọc" },
+      done: { color: "#10b981", text: "Hoàn thành" },
+    };
+    return statusMap[status] || statusMap.planning;
+  };
+
+  const renderItem = ({ item }: { item: BookRow }) => {
+    const statusInfo = getStatusInfo(item.status);
+    return (
+      <Pressable
+        onPress={() => cycleStatus(item)}
+        onLongPress={() => openEdit(item)}
+        style={styles.bookItem}
+      >
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[
+              styles.bookTitle,
+              item.status === "done" && styles.doneTitle,
+            ]}
+          >
+            {item.title}
+          </Text>
+          <Text style={styles.bookAuthor}>{item.author ?? "—"}</Text>
+        </View>
+
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={[styles.statusLabel, { color: statusInfo.color }]}>
+            {statusInfo.text.toUpperCase()}
+          </Text>
+          <Text style={styles.metaText}>
+            {new Date(item.created_at * 1000).toLocaleDateString("vi-VN")}
+          </Text>
+          <TouchableOpacity onPress={() => confirmDelete(item)}>
+            <Text style={styles.deleteText}>Xóa</Text>
+          </TouchableOpacity>
+        </View>
+      </Pressable>
+    );
+  };
+
+  const resetModals = () => {
     setAddModalVisible(false);
     setEditModalVisible(false);
     setEditing(null);
@@ -339,59 +145,109 @@ export default function Index() {
     setAuthorInput("");
   };
 
-  // Hàm xử lý khi thêm sách thành công (khi AddModal gọi onSave)
-  const handleAddBook = async (title: string, author: string | undefined) => {
-    await addNewBook(title, author);
-    closeModalAndReset(); // Reset input và đóng modal
-  };
+  const ModalContent = ({ isEdit = false }) => (
+    <View style={styles.modalContent}>
+      <Text style={styles.modalTitle}>{isEdit ? "Sửa sách" : "Thêm sách"}</Text>
 
-  const handleImport = async () => {
-    const url = "https://68e9ecaff1eeb3f856e55f1e.mockapi.io/viet-22638111";
-    try {
-      await importFromApi(url);
-      Alert.alert("Hoàn tất", "Đã import xong (nếu có sách mới).");
-    } catch (err) {
-      Alert.alert("Lỗi import", (err as any).message || String(err));
-    }
-  };
+      <TextInput
+        placeholder="Tiêu đề (bắt buộc)"
+        value={titleInput}
+        onChangeText={setTitleInput}
+        style={styles.modalInput}
+      />
+      <TextInput
+        placeholder="Tác giả (tuỳ chọn)"
+        value={authorInput}
+        onChangeText={setAuthorInput}
+        style={styles.modalInput}
+      />
 
-  const renderItem = ({ item }: { item: BookRow }) => (
-    <BookItem
-      item={item}
-      onPress={cycleStatus}
-      onLongPress={openEdit}
-      onRemove={removeBook}
-    />
+      {isEdit && (
+        <View style={styles.statusContainer}>
+          {(["planning", "reading", "done"] as BookStatus[]).map((s) => (
+            <TouchableOpacity
+              key={s}
+              onPress={() =>
+                setEditing((prev) => (prev ? { ...prev, status: s } : prev))
+              }
+              style={[
+                styles.statusSelect,
+                editing?.status === s && styles.statusSelectActive,
+              ]}
+            >
+              <Text
+                style={
+                  editing?.status === s
+                    ? styles.statusTextActive
+                    : styles.statusText
+                }
+              >
+                {getStatusInfo(s).text}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      <View style={styles.modalButtons}>
+        <TouchableOpacity
+          onPress={isEdit ? handleSaveEdit : handleSaveAdd}
+          style={[styles.modalButton, styles.modalSave]}
+          disabled={!titleInput.trim()}
+        >
+          <Text style={styles.modalSaveText}>Lưu</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={resetModals}
+          style={[styles.modalButton, styles.modalCancel]}
+        >
+          <Text style={styles.modalCancelText}>Hủy</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerText}>Reading List</Text>
+        <Text style={styles.headerText}>Danh sách đọc</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => {
-            closeModalAndReset(); // Đảm bảo input sạch
-            setAddModalVisible(true);
-          }}
+          onPress={() => setAddModalVisible(true)}
         >
           <Text style={styles.addButtonText}>+ Thêm</Text>
         </TouchableOpacity>
       </View>
 
       {/* Search & Filter */}
-      <View style={styles.row}>
-        <TextInput
-          placeholder="Tìm theo tiêu đề..."
-          value={searchText}
-          onChangeText={setSearchText}
-          style={[styles.input, { flex: 1 }]}
-        />
-        <StatusFilter
-          filterStatus={filterStatus}
-          setFilterStatus={setFilterStatus}
-        />
+      <TextInput
+        placeholder="Tìm theo tiêu đề..."
+        value={searchText}
+        onChangeText={setSearchText}
+        style={styles.input}
+      />
+      <View style={styles.filterRow}>
+        {(
+          ["all", "planning", "reading", "done"] as Array<BookStatus | "all">
+        ).map((s) => (
+          <TouchableOpacity
+            key={s}
+            onPress={() => setFilterStatus(s)}
+            style={[
+              styles.filterBtn,
+              filterStatus === s && styles.filterBtnActive,
+            ]}
+          >
+            <Text
+              style={
+                filterStatus === s ? styles.filterTextActive : styles.filterText
+              }
+            >
+              {s === "all" ? "Tất cả" : getStatusInfo(s as BookStatus).text}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       {/* Import */}
@@ -404,7 +260,7 @@ export default function Index() {
           {importing ? "Đang import..." : "Import từ API"}
         </Text>
       </TouchableOpacity>
-      {importError ? <Text style={styles.errText}>{importError}</Text> : null}
+      {importError && <Text style={styles.errText}>{importError}</Text>}
 
       {/* List */}
       <FlatList
@@ -416,41 +272,36 @@ export default function Index() {
         }
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyText}>
-              Chưa có sách trong danh sách đọc.
-            </Text>
+            <Text style={styles.emptyText}>Chưa có sách</Text>
           </View>
         }
-        contentContainerStyle={{ paddingBottom: 30 }}
       />
 
-      {/* Add Modal */}
-      <AddModal
+      {/* Modals */}
+      <Modal
         visible={addModalVisible}
-        onClose={closeModalAndReset}
-        titleInput={titleInput}
-        setTitleInput={setTitleInput}
-        authorInput={authorInput}
-        setAuthorInput={setAuthorInput}
-        onSave={handleAddBook}
-      />
+        transparent
+        animationType="fade"
+        onRequestClose={resetModals}
+      >
+        <View style={styles.modalOverlay}>
+          <ModalContent />
+        </View>
+      </Modal>
 
-      {/* Edit Modal */}
-      <EditModal
+      <Modal
         visible={editModalVisible}
-        editing={editing}
-        onClose={closeModalAndReset}
-        titleInput={titleInput}
-        setTitleInput={setTitleInput}
-        authorInput={authorInput}
-        setAuthorInput={setAuthorInput}
-        onSave={editBook}
-      />
+        transparent
+        animationType="fade"
+        onRequestClose={resetModals}
+      >
+        <View style={styles.modalOverlay}>
+          <ModalContent isEdit />
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
-
-// --- Styles (Giữ nguyên) ---
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, backgroundColor: "#f3f4f6" },
@@ -458,24 +309,28 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 16,
   },
   headerText: { fontSize: 24, fontWeight: "700", color: "#1f2937" },
-  addButton: { backgroundColor: "#2563eb", padding: 10, borderRadius: 10 },
+  addButton: {
+    backgroundColor: "#2563eb",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
   addButtonText: { color: "#fff", fontWeight: "600" },
-  row: { marginBottom: 8 },
   input: {
     backgroundColor: "#fff",
     borderRadius: 10,
-    padding: 10,
+    padding: 12,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     marginBottom: 8,
   },
-  filterRow: { flexDirection: "row", marginTop: 4, flexWrap: "wrap" },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 12 },
   filterBtn: {
     paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
@@ -483,34 +338,40 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   filterBtnActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  filterText: { color: "#374151", textTransform: "capitalize" },
-  filterTextActive: { color: "#fff", textTransform: "capitalize" },
+  filterText: { color: "#374151", fontSize: 12 },
+  filterTextActive: { color: "#fff", fontSize: 12 },
   importBtn: {
     backgroundColor: "#10b981",
-    padding: 10,
+    padding: 12,
     borderRadius: 10,
     marginBottom: 8,
   },
   importBtnDisabled: { backgroundColor: "#94a3b8" },
   importText: { color: "#fff", fontWeight: "600", textAlign: "center" },
-  errText: { color: "#ef4444", marginBottom: 8 },
+  errText: { color: "#ef4444", marginBottom: 8, textAlign: "center" },
   bookItem: {
-    padding: 14,
+    padding: 16,
     backgroundColor: "#fff",
     borderRadius: 12,
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 10,
   },
-  bookTitle: { fontSize: 16, fontWeight: "600", color: "#111827" },
+  bookTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 4,
+  },
   doneTitle: { textDecorationLine: "line-through", color: "#9ca3af" },
-  bookAuthor: { fontSize: 12, color: "#6b7280", marginTop: 3 },
-  statusLabel: { fontSize: 12, fontWeight: "700", textTransform: "uppercase" },
-  metaText: { fontSize: 11, color: "#6b7280" },
-  deleteText: { color: "#ef4444", marginTop: 6, fontWeight: "600" },
+  bookAuthor: { fontSize: 14, color: "#6b7280" },
+  statusLabel: { fontSize: 12, fontWeight: "700", marginBottom: 4 },
+  metaText: { fontSize: 11, color: "#6b7280", marginBottom: 4 },
+  deleteText: { color: "#ef4444", fontWeight: "600", fontSize: 12 },
   empty: { padding: 40, alignItems: "center" },
-  emptyText: { color: "#9ca3af" },
+  emptyText: { color: "#9ca3af", fontSize: 16 },
 
+  // Modal styles
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.4)",
@@ -524,35 +385,43 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 12,
   },
-  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 12 },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    marginBottom: 16,
+    textAlign: "center",
+  },
   modalInput: {
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
     borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-  },
-  modalSave: {
-    backgroundColor: "#2563eb",
     padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
+    marginBottom: 12,
   },
+  modalButtons: { flexDirection: "row", gap: 12 },
+  modalButton: { flex: 1, padding: 14, borderRadius: 8 },
+  modalSave: { backgroundColor: "#2563eb" },
   modalSaveText: { color: "#fff", textAlign: "center", fontWeight: "700" },
-  modalCancel: { backgroundColor: "#ef4444", padding: 12, borderRadius: 8 },
+  modalCancel: { backgroundColor: "#6b7280" },
   modalCancelText: { color: "#fff", textAlign: "center", fontWeight: "700" },
+
+  // Status selection
+  statusContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 16,
+    gap: 8,
+  },
   statusSelect: {
     flex: 1,
-    marginHorizontal: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     alignItems: "center",
   },
   statusSelectActive: { backgroundColor: "#111827", borderColor: "#111827" },
-  statusText: { textTransform: "capitalize", color: "#374151" },
-  statusTextActive: { color: "#fff", textTransform: "capitalize" },
+  statusText: { fontSize: 14, color: "#374151" },
+  statusTextActive: { color: "#fff", fontSize: 14 },
 });
