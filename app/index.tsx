@@ -15,9 +15,15 @@ import {
 import { BookRow, BookStatus, initDB } from "../db";
 import { useBooks } from "./useBooks";
 
-// --- Components Con ---
+// --- Constants & Helper ---
+const statusOptions: Array<BookStatus | "all"> = [
+  "all",
+  "planning",
+  "reading",
+  "done",
+];
 
-// 1. Component BookItem
+// --- 1. Component BookItem ---
 interface BookItemProps {
   item: BookRow;
   onPress: (book: BookRow) => void;
@@ -74,18 +80,11 @@ const BookItem: React.FC<BookItemProps> = ({
   );
 };
 
-// 2. Component StatusFilter
+// --- 2. Component StatusFilter ---
 interface StatusFilterProps {
   filterStatus: BookStatus | "all";
   setFilterStatus: (status: BookStatus | "all") => void;
 }
-
-const statusOptions: Array<BookStatus | "all"> = [
-  "all",
-  "planning",
-  "reading",
-  "done",
-];
 
 const StatusFilter: React.FC<StatusFilterProps> = ({
   filterStatus,
@@ -110,26 +109,39 @@ const StatusFilter: React.FC<StatusFilterProps> = ({
   </View>
 );
 
-// 3. Component AddModal
+// --- 3. Component AddModal ---
 interface AddModalProps {
   visible: boolean;
   onClose: () => void;
+  titleInput: string;
+  setTitleInput: (text: string) => void;
+  authorInput: string;
+  setAuthorInput: (text: string) => void;
   onSave: (title: string, author: string | undefined) => Promise<void>;
 }
 
-const AddModal: React.FC<AddModalProps> = ({ visible, onClose, onSave }) => {
-  const [titleInput, setTitleInput] = useState("");
-  const [authorInput, setAuthorInput] = useState("");
-
+const AddModal: React.FC<AddModalProps> = ({
+  visible,
+  onClose,
+  titleInput,
+  setTitleInput,
+  authorInput,
+  setAuthorInput,
+  onSave,
+}) => {
   const handleSave = async () => {
     await onSave(titleInput, authorInput || undefined);
-    setTitleInput("");
-    setAuthorInput("");
+    // State reset được thực hiện ở component cha (Index) sau khi đóng modal
     onClose();
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Thêm sách</Text>
@@ -145,7 +157,11 @@ const AddModal: React.FC<AddModalProps> = ({ visible, onClose, onSave }) => {
             onChangeText={setAuthorInput}
             style={styles.modalInput}
           />
-          <TouchableOpacity onPress={handleSave} style={styles.modalSave}>
+          <TouchableOpacity
+            onPress={handleSave}
+            style={styles.modalSave}
+            disabled={!titleInput}
+          >
             <Text style={styles.modalSaveText}>Lưu</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
@@ -157,11 +173,15 @@ const AddModal: React.FC<AddModalProps> = ({ visible, onClose, onSave }) => {
   );
 };
 
-// 4. Component EditModal
+// --- 4. Component EditModal ---
 interface EditModalProps {
   visible: boolean;
   editing: BookRow | null;
   onClose: () => void;
+  titleInput: string;
+  setTitleInput: (text: string) => void;
+  authorInput: string;
+  setAuthorInput: (text: string) => void;
   onSave: (
     id: number,
     data: { title: string; author: string | null; status: BookStatus }
@@ -172,19 +192,22 @@ const EditModal: React.FC<EditModalProps> = ({
   visible,
   editing,
   onClose,
+  titleInput,
+  setTitleInput,
+  authorInput,
+  setAuthorInput,
   onSave,
 }) => {
-  const [titleInput, setTitleInput] = useState("");
-  const [authorInput, setAuthorInput] = useState("");
+  // Quản lý trạng thái cục bộ cho Status trong khi chỉnh sửa
   const [status, setStatus] = useState<BookStatus>("planning");
 
   useEffect(() => {
     if (editing) {
       setTitleInput(editing.title);
       setAuthorInput(editing.author ?? "");
-      setStatus(editing.status);
+      setStatus(editing.status); // Đồng bộ trạng thái status từ book
     }
-  }, [editing]);
+  }, [editing, setTitleInput, setAuthorInput]);
 
   const handleSave = async () => {
     if (!editing) return;
@@ -197,7 +220,12 @@ const EditModal: React.FC<EditModalProps> = ({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <Text style={styles.modalTitle}>Sửa sách</Text>
@@ -242,7 +270,11 @@ const EditModal: React.FC<EditModalProps> = ({
             ))}
           </View>
 
-          <TouchableOpacity onPress={handleSave} style={styles.modalSave}>
+          <TouchableOpacity
+            onPress={handleSave}
+            style={styles.modalSave}
+            disabled={!titleInput}
+          >
             <Text style={styles.modalSaveText}>Lưu</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={onClose} style={styles.modalCancel}>
@@ -254,7 +286,7 @@ const EditModal: React.FC<EditModalProps> = ({
   );
 };
 
-// --- Component Chính ---
+// --- Component Chính Index ---
 
 export default function Index() {
   const {
@@ -276,6 +308,8 @@ export default function Index() {
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editModalVisible, setEditModalVisible] = useState(false);
+  const [titleInput, setTitleInput] = useState("");
+  const [authorInput, setAuthorInput] = useState("");
   const [editing, setEditing] = useState<BookRow | null>(null);
 
   useEffect(() => {
@@ -289,9 +323,26 @@ export default function Index() {
     })();
   }, []);
 
+  // Hàm mở Modal chỉnh sửa
   const openEdit = (b: BookRow) => {
     setEditing(b);
+    // Không cần set input ở đây, vì EditModal sẽ tự đồng bộ trong useEffect
     setEditModalVisible(true);
+  };
+
+  // Hàm đóng Modal và reset input
+  const closeModalAndReset = () => {
+    setAddModalVisible(false);
+    setEditModalVisible(false);
+    setEditing(null);
+    setTitleInput("");
+    setAuthorInput("");
+  };
+
+  // Hàm xử lý khi thêm sách thành công (khi AddModal gọi onSave)
+  const handleAddBook = async (title: string, author: string | undefined) => {
+    await addNewBook(title, author);
+    closeModalAndReset(); // Reset input và đóng modal
   };
 
   const handleImport = async () => {
@@ -320,7 +371,10 @@ export default function Index() {
         <Text style={styles.headerText}>Reading List</Text>
         <TouchableOpacity
           style={styles.addButton}
-          onPress={() => setAddModalVisible(true)}
+          onPress={() => {
+            closeModalAndReset(); // Đảm bảo input sạch
+            setAddModalVisible(true);
+          }}
         >
           <Text style={styles.addButtonText}>+ Thêm</Text>
         </TouchableOpacity>
@@ -373,18 +427,23 @@ export default function Index() {
       {/* Add Modal */}
       <AddModal
         visible={addModalVisible}
-        onClose={() => setAddModalVisible(false)}
-        onSave={addNewBook}
+        onClose={closeModalAndReset}
+        titleInput={titleInput}
+        setTitleInput={setTitleInput}
+        authorInput={authorInput}
+        setAuthorInput={setAuthorInput}
+        onSave={handleAddBook}
       />
 
       {/* Edit Modal */}
       <EditModal
         visible={editModalVisible}
         editing={editing}
-        onClose={() => {
-          setEditModalVisible(false);
-          setEditing(null); // Clear editing state when modal closes
-        }}
+        onClose={closeModalAndReset}
+        titleInput={titleInput}
+        setTitleInput={setTitleInput}
+        authorInput={authorInput}
+        setAuthorInput={setAuthorInput}
         onSave={editBook}
       />
     </SafeAreaView>
@@ -484,11 +543,14 @@ const styles = StyleSheet.create({
   modalCancel: { backgroundColor: "#ef4444", padding: 12, borderRadius: 8 },
   modalCancelText: { color: "#fff", textAlign: "center", fontWeight: "700" },
   statusSelect: {
+    flex: 1,
+    marginHorizontal: 4,
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    alignItems: "center",
   },
   statusSelectActive: { backgroundColor: "#111827", borderColor: "#111827" },
   statusText: { textTransform: "capitalize", color: "#374151" },
